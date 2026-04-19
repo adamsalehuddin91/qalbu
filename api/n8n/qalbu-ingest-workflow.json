@@ -1,0 +1,185 @@
+{
+  "name": "Qalbu — Wisdom Ingest Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 6 }]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "path": "qalbu-ingest",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook (Telegram Push)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 600],
+      "webhookId": "qalbu-ingest"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.sunnah.com/v1/hadiths/random",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.SUNNAH_API_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sunnah-api",
+      "name": "Sunnah.com — Random Hadith",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 280]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.alquran.cloud/v1/ayah/random/ms.basmeih",
+        "options": {}
+      },
+      "id": "quran-api",
+      "name": "Al-Quran Cloud — Random Ayat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const d = item.json;\n\n  // Sunnah.com response\n  if (d.hadith) {\n    const text = d.hadith.body || d.hadith.text || '';\n    const book = d.book?.title || d.collection || 'Hadith';\n    const grade = d.hadith.grades?.[0]?.grade || '';\n    const label = grade ? `${book} (${grade})` : book;\n    if (text.length > 20) {\n      results.push({ json: { raw_content: text, source: label, type: 'hadith' } });\n    }\n  }\n\n  // Al-Quran Cloud response\n  else if (d.data?.text) {\n    const text = d.data.text;\n    const surah = d.data.surah?.englishName || 'Al-Quran';\n    const ayah = d.data.numberInSurah;\n    const source = `Al-Quran — ${surah} (${ayah})`;\n    if (text.length > 20) {\n      results.push({ json: { raw_content: text, source, type: 'quran' } });\n    }\n  }\n\n  // Webhook / Telegram push\n  else if (d.body || d.text || d.content) {\n    const text = d.body || d.text || d.content || '';\n    if (text.length > 20) {\n      results.push({ json: { raw_content: text, source: d.source || 'Telegram', type: 'manual' } });\n    }\n  }\n}\n\nreturn results;"
+      },
+      "id": "normalize",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 400]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "value": "gemini-1.5-flash",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "=Kamu adalah AI rohani Islam yang menghasilkan refleksi harian berkualiti tinggi.\n\nDaripada teks berikut, hasilkan satu refleksi lengkap yang terdiri dari 4 bahagian:\n\n1. **content** — terjemahan/ringkasan dalam BM yang impactful (1-2 ayat, bukan akademik)\n2. **arabic_text** — teks asal dalam bahasa Arab jika ada (kosongkan jika tiada)\n3. **meaning** — maksud yang lebih mendalam dalam BM (2-3 ayat, mudah difahami orang awam)\n4. **lesson** — pengajaran/refleksi praktikal untuk kehidupan harian (2-3 ayat, actionable)\n5. **category** — pilih satu: Tawakal, Sabar, Rezeki, atau Syukur\n\nTeks input:\n{{ $json.raw_content }}\n\nSumber: {{ $json.source }}\nJenis: {{ $json.type }}\n\nBalas dalam format JSON sahaja (tiada teks lain, tiada markdown):\n{\n  \"content\": \"terjemahan/ringkasan BM di sini\",\n  \"arabic_text\": \"teks Arab asal atau kosong\",\n  \"meaning\": \"maksud mendalam dalam BM\",\n  \"lesson\": \"pengajaran praktikal untuk kehidupan harian\",\n  \"category\": \"Tawakal|Sabar|Rezeki|Syukur\",\n  \"language\": \"ms\"\n}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "gemini-ai",
+      "name": "Gemini — Extract Wisdom",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [760, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  try {\n    let text = item.json.text || item.json.content || '';\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n    const parsed = JSON.parse(text);\n\n    // SHA256 hash\n    const encoder = new TextEncoder();\n    const data = encoder.encode(parsed.content);\n    const hashBuffer = await crypto.subtle.digest('SHA-256', data);\n    const hashArray = Array.from(new Uint8Array(hashBuffer));\n    const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');\n\n    const source = $('Normalize Input').item.json.source || 'Unknown';\n\n    results.push({\n      json: {\n        content:      parsed.content,\n        arabic_text:  parsed.arabic_text || null,\n        meaning:      parsed.meaning || null,\n        lesson:       parsed.lesson || null,\n        source:       source,\n        category:     parsed.category,\n        language:     parsed.language || 'ms',\n        content_hash: hash,\n      }\n    });\n  } catch (e) {\n    continue;\n  }\n}\n\nreturn results;"
+      },
+      "id": "parse-hash",
+      "name": "Parse + Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QALBU_API_URL }}/api/v1/wisdom/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-N8N-TOKEN", "value": "={{ $env.QALBU_N8N_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "content",      "value": "={{ $json.content }}" },
+            { "name": "arabic_text",  "value": "={{ $json.arabic_text }}" },
+            { "name": "meaning",      "value": "={{ $json.meaning }}" },
+            { "name": "lesson",       "value": "={{ $json.lesson }}" },
+            { "name": "source",       "value": "={{ $json.source }}" },
+            { "name": "category",     "value": "={{ $json.category }}" },
+            { "name": "language",     "value": "={{ $json.language }}" },
+            { "name": "content_hash", "value": "={{ $json.content_hash }}" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "id": "post-laravel",
+      "name": "POST → Laravel API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1240, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = { created: 0, duplicate: 0, error: 0 };\n\nfor (const item of items) {\n  const status = item.json.statusCode || 200;\n  if (status === 201) results.created++;\n  else if (status === 409) results.duplicate++;\n  else results.error++;\n}\n\nconsole.log(`Qalbu ingest: +${results.created} new | ${results.duplicate} dup | ${results.error} err`);\nreturn [{ json: results }];"
+      },
+      "id": "log-result",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, 400]
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [[
+        { "node": "Sunnah.com — Random Hadith", "type": "main", "index": 0 },
+        { "node": "Al-Quran Cloud — Random Ayat", "type": "main", "index": 0 }
+      ]]
+    },
+    "Webhook (Telegram Push)": {
+      "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]]
+    },
+    "Sunnah.com — Random Hadith": {
+      "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]]
+    },
+    "Al-Quran Cloud — Random Ayat": {
+      "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]]
+    },
+    "Normalize Input": {
+      "main": [[{ "node": "Gemini — Extract Wisdom", "type": "main", "index": 0 }]]
+    },
+    "Gemini — Extract Wisdom": {
+      "main": [[{ "node": "Parse + Hash", "type": "main", "index": 0 }]]
+    },
+    "Parse + Hash": {
+      "main": [[{ "node": "POST → Laravel API", "type": "main", "index": 0 }]]
+    },
+    "POST → Laravel API": {
+      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": ["qalbu", "wisdom", "ingest"]
+}
