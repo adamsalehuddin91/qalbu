@@ -11,6 +11,9 @@ WORKDIR /app
 
 COPY . .
 
+RUN mkdir -p bootstrap/cache storage/framework/{sessions,views,cache} storage/logs \
+    && chmod -R 775 bootstrap/cache storage
+
 RUN composer install --optimize-autoloader --no-interaction --no-dev
 
 RUN php artisan config:cache \
