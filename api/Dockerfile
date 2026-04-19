@@ -18,7 +18,6 @@ RUN composer install --optimize-autoloader --no-interaction --no-dev
 
 RUN php artisan config:cache \
     && php artisan route:cache \
-    && php artisan view:cache \
     && php artisan storage:link
 
 RUN chown -R www-data:www-data /app/storage /app/bootstrap/cache \
