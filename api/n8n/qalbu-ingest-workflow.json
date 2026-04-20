@@ -71,32 +71,28 @@
     },
     {
       "parameters": {
-        "resource": "text",
-        "operation": "message",
-        "modelId": {
-          "__rl": true,
-          "value": "gemini-1.5-flash",
-          "mode": "list"
-        },
-        "messages": {
-          "values": [
-            {
-              "role": "user",
-              "content": "=Kamu adalah AI rohani Islam yang menghasilkan refleksi harian berkualiti tinggi.\n\nDaripada teks berikut, hasilkan satu refleksi lengkap yang terdiri dari 4 bahagian:\n\n1. **content** — terjemahan/ringkasan dalam BM yang impactful (1-2 ayat, bukan akademik)\n2. **arabic_text** — teks asal dalam bahasa Arab jika ada (kosongkan jika tiada)\n3. **meaning** — maksud yang lebih mendalam dalam BM (2-3 ayat, mudah difahami orang awam)\n4. **lesson** — pengajaran/refleksi praktikal untuk kehidupan harian (2-3 ayat, actionable)\n5. **category** — pilih satu: Tawakal, Sabar, Rezeki, atau Syukur\n\nTeks input:\n{{ $json.raw_content }}\n\nSumber: {{ $json.source }}\nJenis: {{ $json.type }}\n\nBalas dalam format JSON sahaja (tiada teks lain, tiada markdown):\n{\n  \"content\": \"terjemahan/ringkasan BM di sini\",\n  \"arabic_text\": \"teks Arab asal atau kosong\",\n  \"meaning\": \"maksud mendalam dalam BM\",\n  \"lesson\": \"pengajaran praktikal untuk kehidupan harian\",\n  \"category\": \"Tawakal|Sabar|Rezeki|Syukur\",\n  \"language\": \"ms\"\n}"
-            }
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
           ]
         },
+        "sendBody": true,
+        "bodyType": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Kamu adalah AI rohani Islam yang menghasilkan refleksi harian berkualiti tinggi.\\n\\nDaripada teks berikut, hasilkan satu refleksi lengkap yang terdiri dari 4 bahagian:\\n\\n1. content — terjemahan/ringkasan dalam BM yang impactful (1-2 ayat, bukan akademik)\\n2. arabic_text — teks asal dalam bahasa Arab jika ada (kosongkan jika tiada)\\n3. meaning — maksud yang lebih mendalam dalam BM (2-3 ayat, mudah difahami orang awam)\\n4. lesson — pengajaran/refleksi praktikal untuk kehidupan harian (2-3 ayat, actionable)\\n5. category — pilih satu: Tawakal, Sabar, Rezeki, atau Syukur\\n\\nTeks input:\\n{{ $json.raw_content }}\\n\\nSumber: {{ $json.source }}\\nJenis: {{ $json.type }}\\n\\nBalas dalam format JSON sahaja (tiada teks lain, tiada markdown):\\n{\\n  \\\"content\\\": \\\"terjemahan/ringkasan BM di sini\\\",\\n  \\\"arabic_text\\\": \\\"teks Arab asal atau kosong\\\",\\n  \\\"meaning\\\": \\\"maksud mendalam dalam BM\\\",\\n  \\\"lesson\\\": \\\"pengajaran praktikal untuk kehidupan harian\\\",\\n  \\\"category\\\": \\\"Tawakal|Sabar|Rezeki|Syukur\\\",\\n  \\\"language\\\": \\\"ms\\\"\\n}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.7,\n    \"maxOutputTokens\": 1024\n  }\n}",
         "options": {}
       },
       "id": "gemini-ai",
       "name": "Gemini — Extract Wisdom",
-      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [760, 400]
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  try {\n    let text = item.json.text || item.json.content || '';\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n    const parsed = JSON.parse(text);\n\n    // SHA256 hash\n    const encoder = new TextEncoder();\n    const data = encoder.encode(parsed.content);\n    const hashBuffer = await crypto.subtle.digest('SHA-256', data);\n    const hashArray = Array.from(new Uint8Array(hashBuffer));\n    const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');\n\n    const source = $('Normalize Input').item.json.source || 'Unknown';\n\n    results.push({\n      json: {\n        content:      parsed.content,\n        arabic_text:  parsed.arabic_text || null,\n        meaning:      parsed.meaning || null,\n        lesson:       parsed.lesson || null,\n        source:       source,\n        category:     parsed.category,\n        language:     parsed.language || 'ms',\n        content_hash: hash,\n      }\n    });\n  } catch (e) {\n    continue;\n  }\n}\n\nreturn results;"
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  try {\n    // Gemini REST API response format\n    let text = item.json.candidates?.[0]?.content?.parts?.[0]?.text || '';\n    text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n    const parsed = JSON.parse(text);\n\n    // SHA256 hash\n    const encoder = new TextEncoder();\n    const data = encoder.encode(parsed.content);\n    const hashBuffer = await crypto.subtle.digest('SHA-256', data);\n    const hashArray = Array.from(new Uint8Array(hashBuffer));\n    const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');\n\n    const source = $('Normalize Input').item.json.source || 'Unknown';\n\n    results.push({\n      json: {\n        content:      parsed.content,\n        arabic_text:  parsed.arabic_text || null,\n        meaning:      parsed.meaning || null,\n        lesson:       parsed.lesson || null,\n        source:       source,\n        category:     parsed.category,\n        language:     parsed.language || 'ms',\n        content_hash: hash,\n      }\n    });\n  } catch (e) {\n    continue;\n  }\n}\n\nreturn results;"
       },
       "id": "parse-hash",
       "name": "Parse + Hash",
